@@ -1,87 +1,88 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
+﻿using Microsoft.EntityFrameworkCore;
+using TaskApi.Data;
 using TaskApi.Models;
 
 namespace TaskApi.Services
 {
     public class TaskService
     {
-        // Mock data to simulate records inside a database
-        private readonly List<TaskItem> _tasks = new List<TaskItem>
+        private readonly AppDbContext _context;
+
+        public TaskService(AppDbContext context)
         {
-            new TaskItem { Id = 1, Title = "Morning Team Meeting", IsCompleted = true, CreatedDate = DateTime.UtcNow.AddDays(-5) },
-            new TaskItem { Id = 2, Title = "Review Project Requirements", IsCompleted = false, CreatedDate = DateTime.UtcNow.AddDays(-4) },
-            new TaskItem { Id = 3, Title = "Write Unit Tests", IsCompleted = false, CreatedDate = DateTime.UtcNow.AddDays(-3) },
-            new TaskItem { Id = 4, Title = "Fix API Pagination Bug", IsCompleted = true, CreatedDate = DateTime.UtcNow.AddDays(-2) },
-            new TaskItem { Id = 5, Title = "Deploy to Production", IsCompleted = false, CreatedDate = DateTime.UtcNow.AddDays(-1) },
-            new TaskItem { Id = 6, Title = "Code Review Checklist", IsCompleted = false, CreatedDate = DateTime.UtcNow }
-        };
+            _context = context;
+        }
 
-        public PagedResult<TaskItem> GetAll(TaskFilterParams filter)
+        // 1. CREATE (Async)
+        public async Task<TaskItem> CreateAsync(TaskItem task)
         {
-            var query = _tasks.AsQueryable();
+            await _context.Tasks.AddAsync(task);
+            await _context.SaveChangesAsync();
+            return task;
+        }
+        // 2. READ ALL (With Search, Filter, and Pagination)
+        public async Task<object> GetAllAsync(string? search, bool? completed, int page = 1, int pageSize = 5)
+        {
+            // Start with a composable IQueryable query expression
+            var query = _context.Tasks.AsQueryable();
 
-            // 1. SEARCHING (Step 10)
-            if (!string.IsNullOrWhiteSpace(filter.Search))
+            // Step 11: Case-insensitive Title Search
+            if (!string.IsNullOrWhiteSpace(search))
             {
-                query = query.Where(t => t.Title.Contains(filter.Search, StringComparison.OrdinalIgnoreCase));
+                query = query.Where(t => t.Title.ToLower().Contains(search.ToLower()));
             }
 
-            // 2. FILTERING (Step 11)
-            if (filter.IsCompleted.HasValue)
+            // Step 12: Completion Status Filter
+            if (completed.HasValue)
             {
-                query = query.Where(t => t.IsCompleted == filter.IsCompleted.Value);
+                query = query.Where(t => t.IsCompleted == completed.Value);
             }
 
-            // BONUS: DATE RANGE FILTERING (Step 12)
-            if (filter.CreatedAfter.HasValue)
-            {
-                query = query.Where(t => t.CreatedDate >= filter.CreatedAfter.Value);
-            }
-            if (filter.CreatedBefore.HasValue)
-            {
-                query = query.Where(t => t.CreatedDate <= filter.CreatedBefore.Value);
-            }
+            // Step 13: Calculate metadata counts and paginate at the database level
+            var totalCount = await query.CountAsync();
 
-            // 3. SORTING WITH A DICTIONARY WHITELIST (Step 13)
-            var sortOptions = new Dictionary<string, Func<TaskItem, object>>
+            var tasks = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            // Return the clean paginated structure
+            return new
             {
-                { "title", t => t.Title },
-                { "createddate", t => t.CreatedDate },
-                { "iscompleted", t => t.IsCompleted },
-                { "id", t => t.Id }
+                totalCount,
+                items = tasks
             };
+        }
+        // 3. READ BY ID (Async)
+        public async Task<TaskItem?> GetByIdAsync(int id)
+        {
+            return await _context.Tasks.FindAsync(id);
+        }
 
-            // Normalize layout string casing and fallback to "title" if input is unknown
-            string sortByLower = (filter.SortBy ?? "title").ToLower();
-            if (!sortOptions.ContainsKey(sortByLower))
-            {
-                sortByLower = "title";
-            }
+        // 4. UPDATE (Async)
+        public async Task<TaskItem?> UpdateAsync(int id, TaskItem updatedTask)
+        {
+            var existingTask = await _context.Tasks.FindAsync(id);
+            if (existingTask == null) return null;
 
-            query = filter.Descending
-                ? query.OrderByDescending(sortOptions[sortByLower]).AsQueryable()
-                : query.OrderBy(sortOptions[sortByLower]).AsQueryable();
+            existingTask.Title = updatedTask.Title;
+            existingTask.Description = updatedTask.Description;
+            existingTask.IsCompleted = updatedTask.IsCompleted;
 
-            // 4. PAGINATION CALCULATIONS (Step 14 & 15)
-            int totalCount = query.Count();
+            _context.Tasks.Update(existingTask);
+            await _context.SaveChangesAsync();
+            return existingTask;
+        }
 
-            var pagedItems = query
-                .Skip((filter.Page - 1) * filter.PageSize)
-                .Take(filter.PageSize)
-                .ToList();
+        // 5. DELETE (Async)
+        public async Task<bool> DeleteAsync(int id)
+        {
+            var task = await _context.Tasks.FindAsync(id);
+            if (task == null) return false;
 
-            int totalPages = (int)Math.Ceiling(totalCount / (double)filter.PageSize);
-
-            return new PagedResult<TaskItem>
-            {
-                Items = pagedItems,
-                TotalCount = totalCount,
-                TotalPages = totalPages == 0 ? 1 : totalPages,
-                HasNextPage = filter.Page < totalPages,
-                HasPreviousPage = filter.Page > 1
-            };
+            _context.Tasks.Remove(task);
+            await _context.SaveChangesAsync();
+            return true;
         }
     }
 }

@@ -1,11 +1,18 @@
 using Microsoft.EntityFrameworkCore;
 using TaskApi.Data;
+
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddSingleton<TaskApi.Services.TaskService>();
+
+// Register the Database Context
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// Corrected: Register TaskService as Scoped to match the AppDbContext lifetime
+builder.Services.AddScoped<TaskApi.Services.TaskService>();
 
 // Add services to the container.
-
 builder.Services.AddControllers();
+
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -15,10 +22,6 @@ builder.Services.AddSwaggerGen(options =>
     options.IncludeXmlComments(
         Path.Combine(AppContext.BaseDirectory, xmlFilename));
 });
-
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(
-        builder.Configuration.GetConnectionString("DefaultConnection")));
 
 var app = builder.Build();
 
